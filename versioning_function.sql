@@ -5,7 +5,7 @@ DECLARE
   history_table text;
   manipulate jsonb;
   ignore_unchanged_values bool;
-  commonColumns text[];
+  common_columns text[];
   time_stamp_to_use timestamptz := current_timestamp;
   range_lower timestamptz;
   transaction_info txid_snapshot;
@@ -13,8 +13,13 @@ DECLARE
   holder record;
   holder2 record;
   pg_version integer;
+  copy_new jsonb;
+  copy_old jsonb;
+  json_new jsonb;
+  json_old jsonb;
+  name_col text;
 BEGIN
-  -- version 0.4.0
+  -- version 0.5.0
 
   IF TG_WHEN != 'BEFORE' OR TG_LEVEL != 'ROW' THEN
     RAISE TRIGGER_PROTOCOL_VIOLATED USING
@@ -158,20 +163,36 @@ BEGIN
       WHERE  attrelid = TG_RELID
       AND    attnum > 0
       AND    NOT attisdropped)
-    SELECT array_agg(quote_ident(history.attname)) INTO commonColumns
+    SELECT array_agg(quote_ident(history.attname)) INTO common_columns
       FROM history
       INNER JOIN main
       ON history.attname = main.attname
       AND history.attname != sys_period;
 
+    --- we should iterate over each column and make a new object
+    json_new := '{}'::jsonb;
+    json_old := '{}'::jsonb;
+
+    copy_new := to_jsonb(NEW);
+    copy_old := to_jsonb(OLD);
+
+    FOREACH name_col in array common_columns LOOP
+      json_new := json_new || jsonb_build_object(name_col, jsonb_extract_path(copy_new, name_col));
+      json_old := json_old || jsonb_build_object(name_col, jsonb_extract_path(copy_old, name_col));
+    END LOOP;
+
+    IF json_new @> json_old AND json_old @> json_new THEN
+      RETURN OLD;
+    END IF;
+
     EXECUTE ('INSERT INTO ' ||
       history_table ||
       '(' ||
-      array_to_string(commonColumns , ',') ||
+      array_to_string(common_columns , ',') ||
       ',' ||
       quote_ident(sys_period) ||
       ') VALUES ($1.' ||
-      array_to_string(commonColumns, ',$1.') ||
+      array_to_string(common_columns, ',$1.') ||
       ',tstzrange($2, $3, ''[)''))')
        USING OLD, range_lower, time_stamp_to_use;
   END IF;
