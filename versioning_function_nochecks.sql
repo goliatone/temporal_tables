@@ -66,20 +66,23 @@ BEGIN
       ON history.attname = main.attname
       AND history.attname != sys_period;
 
-    --- we should iterate over each column and make a new object
-    json_new := '{}'::jsonb;
-    json_old := '{}'::jsonb;
+     --- We want to compare the actual tracked columns one by one since
+    --- NEW IS NOT DISTINCT FROM OLD is not exhaustive.
+    IF TG_OP = 'UPDATE' THEN
+      json_new := '{}'::jsonb;
+      json_old := '{}'::jsonb;
 
-    copy_new := to_jsonb(NEW);
-    copy_old := to_jsonb(OLD);
+      copy_new := to_jsonb(NEW);
+      copy_old := to_jsonb(OLD);
 
-    FOREACH name_col in array common_columns LOOP
-      json_new := json_new || jsonb_build_object(name_col, jsonb_extract_path(copy_new, name_col));
-      json_old := json_old || jsonb_build_object(name_col, jsonb_extract_path(copy_old, name_col));
-    END LOOP;
+      FOREACH name_col in array common_columns LOOP
+        json_new := json_new || jsonb_build_object(name_col, jsonb_extract_path(copy_new, name_col));
+        json_old := json_old || jsonb_build_object(name_col, jsonb_extract_path(copy_old, name_col));
+      END LOOP;
 
-    IF json_new @> json_old AND json_old @> json_new THEN
-      RETURN OLD;
+      IF json_new @> json_old AND json_old @> json_new THEN
+        RETURN OLD;
+      END IF;
     END IF;
 
     EXECUTE ('INSERT INTO ' ||
